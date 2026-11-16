@@ -19,3 +19,7 @@ CMakeUserPresets.json
 
 # Secrets
 Core/Inc/secret.h
+
+# Sauvegardes CubeMX
+Backup/
+*.bak
