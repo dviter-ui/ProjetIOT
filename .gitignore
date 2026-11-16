@@ -1,0 +1,21 @@
+# Build
+build/
+Debug/
+Release/
+*.elf
+*.bin
+*.hex
+*.map
+*.o
+*.d
+
+# Outils / IDE
+.cache/
+compile_commands.json
+CMakeUserPresets.json
+.vscode/
+.idea/
+.settings/
+
+# Secrets
+Core/Inc/secrets.h
