@@ -18,9 +18,36 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "spi.h"
+#include "tim.h"
+#include "usart.h"
+#include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "debug.h"
+#include "hal.h"
+#include "lmic.h"
+#include "lorabase.h"
+#include "oslmic.h"
+#include <string.h>
+
+//This header file must contain the following code
+
+/*
+Private variables ---------------------------------------------------------
+// application router ID (LSBF) < ------- IMPORTANT
+static const u1_t APPEUI[8] = { IMPORT FROM TTN };
+// unique device ID (LSBF) < ------- IMPORTANT
+static const u1_t DEVEUI[8] = { CREATE RANDOM NUMBER };
+// device-specific AES key (derived from device EUI (MSBF))
+static const u1_t DEVKEY[16] = { IMPORT FROM TTN };
+
+
+//APPEUI,DEVEUI must be copied from thethingsnetwork application datas in LSB format
+//-----------------------------------------------------------------------------------------
+*/
+#include "secret.h"
 
 /* USER CODE END Includes */
 
@@ -40,11 +67,6 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-SPI_HandleTypeDef hspi3;
-
-TIM_HandleTypeDef htim7;
-
-UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 
@@ -52,17 +74,124 @@ UART_HandleTypeDef huart1;
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
-static void MX_GPIO_Init(void);
-static void MX_SPI3_Init(void);
-static void MX_TIM7_Init(void);
-static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+// provide application router ID (8 bytes, LSBF)
+void os_getArtEui (u1_t* buf) {
+	memcpy(buf, APPEUI, 8);
+}
+// provide device ID (8 bytes, LSBF)
+void os_getDevEui (u1_t* buf) {
+	memcpy(buf, DEVEUI, 8);
+}
+// provide device key (16 bytes)
+void os_getDevKey (u1_t* buf) {
+	memcpy(buf, DEVKEY, 16);
+}
+void initsensor(){
+// Here you init your sensors
+}
 
+void initfunc (osjob_t* j) {
+	// intialize sensor hardware
+	initsensor();
+	// reset MAC state
+	LMIC_reset();
+	// start joining
+	LMIC_startJoining();
+	// init done - onEvent() callback will be invoked...
+}
+u2_t readsensor(){
+	u2_t value = 0xDF; /// read from evrything ...make your own sensor
+	return value;
+}
+
+static osjob_t reportjob;
+// report sensor value every minute
+static void reportfunc (osjob_t* j) {
+	// read sensor
+	u2_t val = readsensor();
+	debug_val("val = ", val);
+	// prepare and schedule data for transmission
+	LMIC.frame[0] = val << 8;
+	LMIC.frame[1] = val;
+	LMIC_setTxData2(1, LMIC.frame, 2, 0); // (port 1, 2 bytes, unconfirmed)
+	// reschedule job in 60 seconds
+	os_setTimedCallback(j, os_getTime()+sec2osticks(15), reportfunc);
+}
+
+
+
+//////////////////////////////////////////////////
+// LMIC EVENT CALLBACK
+//////////////////////////////////////////////////
+void onEvent (ev_t ev) {
+	debug_event(ev);
+	switch(ev) {
+	// network joined, session established
+		case EV_JOINING:
+			debug_str("try joining\r\n");
+			break;
+		case EV_JOINED:
+			// kick-off periodic sensor job
+			reportfunc(&reportjob);
+			break;
+		case EV_JOIN_FAILED:
+			debug_str("join failed\r\n");
+			break;
+		case EV_SCAN_TIMEOUT:
+			debug_str("EV_SCAN_TIMEOUT\r\n");
+			break;
+		case EV_BEACON_FOUND:
+			debug_str("EV_BEACON_FOUND\r\n");
+			break;
+		case EV_BEACON_MISSED:
+			debug_str("EV_BEACON_MISSED\r\n");
+			break;
+		case EV_BEACON_TRACKED:
+			debug_str("EV_BEACON_TRACKED\r\n");
+			break;
+		case EV_RFU1:
+			debug_str("EV_RFU1\r\n");
+			break;
+		case EV_REJOIN_FAILED:
+			debug_str("EV_REJOIN_FAILED\r\n");
+			break;
+		case EV_TXCOMPLETE:
+			debug_str("EV_TXCOMPLETE (includes waiting for RX windows)\r\n");
+			if (LMIC.txrxFlags & TXRX_ACK)
+				debug_str("Received ack\r\n");
+			if (LMIC.dataLen) {
+				debug_str("Received ");
+				debug_val("len = ", LMIC.dataLen);
+				debug_str(" bytes of payload\r\n");
+			}
+			break;
+		case EV_LOST_TSYNC:
+			debug_str("EV_LOST_TSYNC\r\n");
+			break;
+		case EV_RESET:
+			debug_str("EV_RESET\r\n");
+			break;
+		case EV_RXCOMPLETE:
+			// data received in ping slot
+			debug_str("EV_RXCOMPLETE\r\n");
+			break;
+		case EV_LINK_DEAD:
+			debug_str("EV_LINK_DEAD\r\n");
+			break;
+		case EV_LINK_ALIVE:
+			debug_str("EV_LINK_ALIVE\r\n");
+			break;
+		default:
+			debug_str("Unknown event\r\n");
+			break;
+	}
+}
 /* USER CODE END 0 */
 
 /**
@@ -98,6 +227,19 @@ int main(void)
   MX_TIM7_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
+	HAL_TIM_Base_Start_IT(&htim7);   // <----------- change to your setup
+	__HAL_SPI_ENABLE(&hspi3);        // <----------- change to your setup
+	osjob_t initjob;
+	// initialize runtime env
+	os_init();
+	// initialize debug library
+	debug_init();
+	// setup initial job
+	os_setCallback(&initjob, initfunc);
+	// execute scheduled jobs and events
+	os_runloop();
+	// (not reached)
+	return 0;
 
   /* USER CODE END 2 */
 
@@ -170,167 +312,6 @@ void SystemClock_Config(void)
   /** Enable MSI Auto calibration
   */
   HAL_RCCEx_EnableMSIPLLMode();
-}
-
-/**
-  * @brief SPI3 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_SPI3_Init(void)
-{
-
-  /* USER CODE BEGIN SPI3_Init 0 */
-
-  /* USER CODE END SPI3_Init 0 */
-
-  /* USER CODE BEGIN SPI3_Init 1 */
-
-  /* USER CODE END SPI3_Init 1 */
-  /* SPI3 parameter configuration*/
-  hspi3.Instance = SPI3;
-  hspi3.Init.Mode = SPI_MODE_MASTER;
-  hspi3.Init.Direction = SPI_DIRECTION_2LINES;
-  hspi3.Init.DataSize = SPI_DATASIZE_8BIT;
-  hspi3.Init.CLKPolarity = SPI_POLARITY_LOW;
-  hspi3.Init.CLKPhase = SPI_PHASE_1EDGE;
-  hspi3.Init.NSS = SPI_NSS_SOFT;
-  hspi3.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_64;
-  hspi3.Init.FirstBit = SPI_FIRSTBIT_MSB;
-  hspi3.Init.TIMode = SPI_TIMODE_DISABLE;
-  hspi3.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
-  hspi3.Init.CRCPolynomial = 7;
-  hspi3.Init.CRCLength = SPI_CRC_LENGTH_DATASIZE;
-  hspi3.Init.NSSPMode = SPI_NSS_PULSE_ENABLE;
-  if (HAL_SPI_Init(&hspi3) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN SPI3_Init 2 */
-
-  /* USER CODE END SPI3_Init 2 */
-
-}
-
-/**
-  * @brief TIM7 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM7_Init(void)
-{
-
-  /* USER CODE BEGIN TIM7_Init 0 */
-
-  /* USER CODE END TIM7_Init 0 */
-
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-
-  /* USER CODE BEGIN TIM7_Init 1 */
-
-  /* USER CODE END TIM7_Init 1 */
-  htim7.Instance = TIM7;
-  htim7.Init.Prescaler = 2499;
-  htim7.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim7.Init.Period = 65535;
-  htim7.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_Base_Init(&htim7) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim7, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM7_Init 2 */
-
-  /* USER CODE END TIM7_Init 2 */
-
-}
-
-/**
-  * @brief USART1 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_USART1_UART_Init(void)
-{
-
-  /* USER CODE BEGIN USART1_Init 0 */
-
-  /* USER CODE END USART1_Init 0 */
-
-  /* USER CODE BEGIN USART1_Init 1 */
-
-  /* USER CODE END USART1_Init 1 */
-  huart1.Instance = USART1;
-  huart1.Init.BaudRate = 115200;
-  huart1.Init.WordLength = UART_WORDLENGTH_8B;
-  huart1.Init.StopBits = UART_STOPBITS_1;
-  huart1.Init.Parity = UART_PARITY_NONE;
-  huart1.Init.Mode = UART_MODE_TX_RX;
-  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
-  huart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
-  huart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
-  if (HAL_UART_Init(&huart1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN USART1_Init 2 */
-
-  /* USER CODE END USART1_Init 2 */
-
-}
-
-/**
-  * @brief GPIO Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_GPIO_Init(void)
-{
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
-  /* USER CODE BEGIN MX_GPIO_Init_1 */
-
-  /* USER CODE END MX_GPIO_Init_1 */
-
-  /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOC_CLK_ENABLE();
-  __HAL_RCC_GPIOA_CLK_ENABLE();
-  __HAL_RCC_GPIOB_CLK_ENABLE();
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, ALIM_TEMP_Pin|RST_Pin|NSS_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pins : ALIM_TEMP_Pin RST_Pin NSS_Pin */
-  GPIO_InitStruct.Pin = ALIM_TEMP_Pin|RST_Pin|NSS_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : TEMP_Pin DIO0_Pin DIO1_Pin */
-  GPIO_InitStruct.Pin = TEMP_Pin|DIO0_Pin|DIO1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : LED1_Pin */
-  GPIO_InitStruct.Pin = LED1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(LED1_GPIO_Port, &GPIO_InitStruct);
-
-  /* USER CODE BEGIN MX_GPIO_Init_2 */
-
-  /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */

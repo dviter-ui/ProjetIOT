@@ -18,4 +18,4 @@ CMakeUserPresets.json
 .settings/
 
 # Secrets
-Core/Inc/secrets.h
+Core/Inc/secret.h
